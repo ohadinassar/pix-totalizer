@@ -6,9 +6,8 @@ const anthropic = new Anthropic({
 
 export type MediaType = "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "application/pdf";
 
-// Model configuration: try cheaper model first, fallback to more capable model
-const HAIKU_MODEL = "claude-3-5-haiku-latest";
-const SONNET_MODEL = "claude-sonnet-4-20250514";
+// Model configuration
+const MODEL = "claude-sonnet-4-20250514";
 
 export interface ExtractionResult {
   amount: number | null;
@@ -119,31 +118,13 @@ async function extractWithModel(
   return parseExtractionResponse(responseText);
 }
 
-/** Extract PIX amount from image or PDF (tries Haiku first for images, Sonnet for PDFs) */
+/** Extract PIX amount from image or PDF using Claude Sonnet */
 export async function extractPixData(
   base64Data: string,
   mediaType: MediaType
 ): Promise<ExtractionResult> {
   try {
-    const isPdf = mediaType === "application/pdf";
-
-    // PDFs require Sonnet - Haiku doesn't support document processing
-    if (isPdf) {
-      return await extractWithModel(base64Data, mediaType, SONNET_MODEL);
-    }
-
-    // For images: try Haiku first (cheaper ~10x)
-    const haikusResult = await extractWithModel(base64Data, mediaType, HAIKU_MODEL);
-
-    // If Haiku successfully extracted an amount, use it
-    if (haikusResult.amount !== null) {
-      return haikusResult;
-    }
-
-    // Fallback to Sonnet for difficult images
-    console.log("Haiku failed to extract amount, trying Sonnet...");
-    const sonnetResult = await extractWithModel(base64Data, mediaType, SONNET_MODEL);
-    return sonnetResult;
+    return await extractWithModel(base64Data, mediaType, MODEL);
   } catch (error) {
     console.error("Vision API error:", error);
     return {
