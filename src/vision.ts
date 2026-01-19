@@ -7,7 +7,7 @@ const anthropic = new Anthropic({
 export type MediaType = "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "application/pdf";
 
 // Model configuration: try cheaper model first, fallback to more capable model
-const HAIKU_MODEL = "claude-3-5-haiku-20241022";
+const HAIKU_MODEL = "claude-3-5-haiku-latest";
 const SONNET_MODEL = "claude-sonnet-4-20250514";
 
 export interface ExtractionResult {
