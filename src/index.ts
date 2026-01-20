@@ -25,7 +25,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 const WEBHOOK_URL = process.env.WEBHOOK_URL; // e.g., https://pix-totalizer-production.up.railway.app
 
-const BUILD_VERSION = "v2.1.0-apagar-buttons";
+const BUILD_VERSION = "v2.2.0-auto-cleanup";
 
 async function main() {
   console.log(`Starting PIX Totalizer bot... (${BUILD_VERSION})`);

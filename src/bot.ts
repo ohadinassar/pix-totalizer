@@ -27,19 +27,41 @@ import { createPixPayment, getPaymentMessage } from "./payments.js";
 
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID ? parseInt(process.env.ADMIN_CHAT_ID, 10) : null;
 
-// Track pending interactive messages (like /apagar buttons) per chat
-const pendingMessages = new Map<number, number>();
+// Track pending interactive messages with timestamps for auto-expiry
+interface PendingMessage {
+  messageId: number;
+  createdAt: number;
+}
+const pendingMessages = new Map<number, PendingMessage>();
+const PENDING_MESSAGE_TTL = 2 * 60 * 1000; // 2 minutes
 
 async function clearPendingMessage(bot: Bot, chatId: number): Promise<void> {
-  const messageId = pendingMessages.get(chatId);
-  if (messageId) {
+  const pending = pendingMessages.get(chatId);
+  if (pending) {
     try {
-      await bot.api.deleteMessage(chatId, messageId);
+      await bot.api.deleteMessage(chatId, pending.messageId);
     } catch {
       // Message might already be deleted, ignore
     }
     pendingMessages.delete(chatId);
   }
+}
+
+function setPendingMessage(chatId: number, messageId: number): void {
+  pendingMessages.set(chatId, { messageId, createdAt: Date.now() });
+}
+
+// Cleanup expired pending messages periodically
+function startPendingMessageCleanup(bot: Bot): void {
+  setInterval(async () => {
+    const now = Date.now();
+    for (const [chatId, pending] of pendingMessages.entries()) {
+      if (now - pending.createdAt > PENDING_MESSAGE_TTL) {
+        console.log(`[cleanup] Expiring pending message for chat ${chatId}`);
+        await clearPendingMessage(bot, chatId);
+      }
+    }
+  }, 30 * 1000); // Check every 30 seconds
 }
 
 export async function createBot(token: string): Promise<Bot> {
@@ -50,6 +72,21 @@ export async function createBot(token: string): Promise<Bot> {
     const ctx = err.ctx;
     console.error(`Error while handling update ${ctx.update.update_id}:`, err.error);
     ctx.reply("❌ Ocorreu um erro. Tente novamente.").catch(() => {});
+  });
+
+  // Start periodic cleanup of expired pending messages
+  startPendingMessageCleanup(bot);
+
+  // Middleware: Clear pending messages on any new message (except callback queries)
+  bot.use(async (ctx, next) => {
+    if (ctx.message && ctx.chat) {
+      const text = ctx.message.text || "";
+      // Don't clear if it's the /apagar command itself
+      if (!text.startsWith("/apagar")) {
+        await clearPendingMessage(bot, ctx.chat.id);
+      }
+    }
+    await next();
   });
 
   // Register commands in Telegram menu
@@ -117,7 +154,7 @@ export async function createBot(token: string): Promise<Bot> {
     await clearPendingMessage(bot, chatId);
 
     const sent = await ctx.reply("🗑️ Qual transação deseja apagar?", { reply_markup: keyboard });
-    pendingMessages.set(chatId, sent.message_id);
+    setPendingMessage(chatId, sent.message_id);
   });
 
   // Handle delete transaction callback
