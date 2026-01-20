@@ -27,6 +27,21 @@ import { createPixPayment, getPaymentMessage } from "./payments.js";
 
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID ? parseInt(process.env.ADMIN_CHAT_ID, 10) : null;
 
+// Track pending interactive messages (like /apagar buttons) per chat
+const pendingMessages = new Map<number, number>();
+
+async function clearPendingMessage(bot: Bot, chatId: number): Promise<void> {
+  const messageId = pendingMessages.get(chatId);
+  if (messageId) {
+    try {
+      await bot.api.deleteMessage(chatId, messageId);
+    } catch {
+      // Message might already be deleted, ignore
+    }
+    pendingMessages.delete(chatId);
+  }
+}
+
 export async function createBot(token: string): Promise<Bot> {
   const bot = new Bot(token);
 
@@ -98,13 +113,21 @@ export async function createBot(token: string): Promise<Bot> {
     });
     keyboard.text("❌ Cancelar", "apagar:cancelar");
 
-    await ctx.reply("🗑️ Qual transação deseja apagar?", { reply_markup: keyboard });
+    // Clear any previous pending message
+    await clearPendingMessage(bot, chatId);
+
+    const sent = await ctx.reply("🗑️ Qual transação deseja apagar?", { reply_markup: keyboard });
+    pendingMessages.set(chatId, sent.message_id);
   });
 
   // Handle delete transaction callback
   bot.callbackQuery(/^apagar:(.+)$/, async (ctx) => {
     const action = ctx.match[1];
     const chatId = ctx.chat!.id;
+    console.log(`[apagar callback] action=${action}, chatId=${chatId}`);
+
+    // Clear from pending map
+    pendingMessages.delete(chatId);
 
     if (action === "cancelar") {
       await ctx.answerCallbackQuery({ text: "Cancelado" });
@@ -114,11 +137,14 @@ export async function createBot(token: string): Promise<Bot> {
 
     const index = parseInt(action, 10);
     if (isNaN(index)) {
+      console.log(`[apagar callback] invalid index: ${action}`);
       await ctx.answerCallbackQuery({ text: "Erro" });
       return;
     }
 
+    console.log(`[apagar callback] deleting index ${index}`);
     const deleted = await deleteTransactionByIndex(chatId, index);
+    console.log(`[apagar callback] deleted:`, deleted);
 
     if (deleted) {
       const amount = deleted.amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -127,6 +153,7 @@ export async function createBot(token: string): Promise<Bot> {
       const message = await getDailySummaryMessage(chatId);
       await ctx.reply(`🗑️ Transação #${index} apagada: ${amount}\n\n${message}`);
     } else {
+      console.log(`[apagar callback] transaction not found`);
       await ctx.answerCallbackQuery({ text: "Transação não encontrada" });
       await ctx.deleteMessage();
     }
@@ -376,6 +403,8 @@ export async function createBot(token: string): Promise<Bot> {
 
   // Handle photo messages
   bot.on("message:photo", async (ctx) => {
+    // Clear any pending interactive message (like /apagar buttons)
+    await clearPendingMessage(bot, ctx.chat.id);
     await processImage(ctx);
   });
 
@@ -388,6 +417,8 @@ export async function createBot(token: string): Promise<Bot> {
       mimeType.startsWith("image/") ||
       mimeType === "application/pdf"
     ) {
+      // Clear any pending interactive message (like /apagar buttons)
+      await clearPendingMessage(bot, ctx.chat.id);
       await processDocument(ctx, mimeType);
     } else {
       await ctx.reply("⚠️ Envie apenas imagens ou PDFs de comprovantes PIX.");
