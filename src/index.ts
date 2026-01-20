@@ -2,6 +2,7 @@ import { createBot } from "./bot.js";
 import { getDailySummaryMessage } from "./summary.js";
 import { handlePaymentWebhook, validateWebhookSignature } from "./payments.js";
 import { resetMonthlyUsage, PLANS } from "./subscription.js";
+import { webhookCallback } from "grammy";
 import cron from "node-cron";
 import http from "http";
 
@@ -21,7 +22,8 @@ for (const envVar of requiredEnvVars) {
 }
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
-const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID; // Optional: your Telegram chat ID for daily summary
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
+const WEBHOOK_URL = process.env.WEBHOOK_URL; // e.g., https://pix-totalizer-production.up.railway.app
 
 async function main() {
   console.log("Starting PIX Totalizer bot...");
@@ -66,13 +68,28 @@ async function main() {
     }
   );
 
-  // Create HTTP server for Mercado Pago webhook
+  // Create webhook handler for Telegram
+  const handleTelegramWebhook = webhookCallback(bot, "http");
+
+  // Create HTTP server
   const PORT = process.env.PORT || 3000;
   const server = http.createServer(async (req, res) => {
     // Health check
     if (req.method === "GET" && req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+
+    // Telegram webhook
+    if (req.method === "POST" && req.url === "/webhook/telegram") {
+      try {
+        await handleTelegramWebhook(req, res);
+      } catch (error) {
+        console.error("Telegram webhook error:", error);
+        res.writeHead(500);
+        res.end("Error");
+      }
       return;
     }
 
@@ -130,28 +147,42 @@ async function main() {
     res.end("Not Found");
   });
 
-  server.listen(PORT, () => {
-    console.log(`Webhook server listening on port ${PORT}`);
-  });
+  server.listen(PORT, async () => {
+    console.log(`Server listening on port ${PORT}`);
 
-  // Start the bot
-  bot.start({
-    onStart: (botInfo) => {
-      console.log(`Bot @${botInfo.username} is running!`);
-      console.log("Daily summary scheduled for 23:59 BRT");
-    },
+    // Set up Telegram webhook if URL is configured
+    if (WEBHOOK_URL) {
+      const webhookUrl = `${WEBHOOK_URL}/webhook/telegram`;
+      try {
+        await bot.api.setWebhook(webhookUrl);
+        console.log(`Telegram webhook set to: ${webhookUrl}`);
+      } catch (error) {
+        console.error("Failed to set webhook:", error);
+      }
+    } else {
+      console.warn("WEBHOOK_URL not set - Telegram webhook not configured");
+      console.warn("Set WEBHOOK_URL env var to enable webhooks");
+    }
+
+    const botInfo = await bot.api.getMe();
+    console.log(`Bot @${botInfo.username} is running!`);
+    console.log("Daily summary scheduled for 23:59 BRT");
   });
 
   // Graceful shutdown
-  process.on("SIGINT", () => {
+  process.on("SIGINT", async () => {
     console.log("Shutting down...");
-    bot.stop();
+    if (WEBHOOK_URL) {
+      await bot.api.deleteWebhook();
+    }
     process.exit(0);
   });
 
-  process.on("SIGTERM", () => {
+  process.on("SIGTERM", async () => {
     console.log("Shutting down...");
-    bot.stop();
+    if (WEBHOOK_URL) {
+      await bot.api.deleteWebhook();
+    }
     process.exit(0);
   });
 }
