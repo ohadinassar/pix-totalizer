@@ -139,9 +139,9 @@ export async function createBot(token: string): Promise<Bot> {
 
     await ctx.reply(
       `📋 *Escolha seu plano:*\n\n` +
-      `💼 *Básico* - 1.000/mês - R$197\n` +
-      `🚀 *Pro* - 3.500/mês - R$349\n` +
-      `⚡ *Ultra* - Ilimitado - R$697`,
+      `💼 *Básico* - 1.000 comprovantes/mês - R$197\n` +
+      `🚀 *Pro* - 3.500 comprovantes/mês - R$349\n` +
+      `⚡ *Ultra* - Comprovantes ilimitados - R$697`,
       { parse_mode: "Markdown", reply_markup: keyboard }
     );
   });
