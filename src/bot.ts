@@ -28,10 +28,10 @@ export async function createBot(token: string): Promise<Bot> {
   // Register commands in Telegram menu
   await bot.api.setMyCommands([
     { command: "start", description: "Iniciar o bot" },
+    { command: "assinar", description: "Ver planos e assinar" },
+    { command: "plano", description: "Ver seu plano e uso" },
     { command: "total", description: "Ver total do dia" },
     { command: "hoje", description: "Listar transações de hoje" },
-    { command: "plano", description: "Ver seu plano e uso" },
-    { command: "assinar", description: "Ver planos disponíveis" },
     { command: "apagar", description: "Apagar última transação" },
     { command: "editar", description: "Editar última transação" },
     { command: "limpar", description: "Limpar todas transações de hoje" },
