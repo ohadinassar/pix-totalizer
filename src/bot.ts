@@ -139,6 +139,7 @@ export async function createBot(token: string): Promise<Bot> {
 
     await ctx.reply(
       `📋 *Escolha seu plano:*\n\n` +
+      `🆓 *Grátis* - 5 comprovantes/dia - R$0 _(atual)_\n\n` +
       `💼 *Básico* - 1.000 comprovantes/mês - R$197\n` +
       `🚀 *Pro* - 3.500 comprovantes/mês - R$349\n` +
       `⚡ *Ultra* - Comprovantes ilimitados - R$697`,
