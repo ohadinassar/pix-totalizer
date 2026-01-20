@@ -104,28 +104,34 @@ export async function clearTodayTransactions(chatId: number): Promise<number> {
   return data?.length ?? 0;
 }
 
-export async function deleteLastTransaction(chatId: number): Promise<Transaction | null> {
+export async function deleteTransactionByIndex(chatId: number, index?: number): Promise<Transaction | null> {
   const todayISO = getStartOfTodayISO();
 
-  // Get the last transaction
-  const { data: lastTx } = await supabase
+  // Get all today's transactions ordered by time (ascending, like /hoje shows)
+  const { data: transactions } = await supabase
     .from("transactions")
     .select("*")
     .eq("chat_id", chatId)
     .gte("created_at", todayISO)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
+    .order("created_at", { ascending: true });
 
-  if (!lastTx) return null;
+  if (!transactions || transactions.length === 0) return null;
+
+  // If no index provided, delete the last one (most recent)
+  // If index provided, it's 1-based (matching /hoje display)
+  const targetIndex = index === undefined ? transactions.length - 1 : index - 1;
+
+  if (targetIndex < 0 || targetIndex >= transactions.length) return null;
+
+  const targetTx = transactions[targetIndex];
 
   // Delete it
   await supabase
     .from("transactions")
     .delete()
-    .eq("id", lastTx.id);
+    .eq("id", targetTx.id);
 
-  return lastTx;
+  return targetTx;
 }
 
 export async function updateLastTransactionAmount(chatId: number, newAmount: number): Promise<Transaction | null> {

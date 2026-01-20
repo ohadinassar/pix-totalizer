@@ -3,8 +3,9 @@ import {
   saveTransaction,
   isDuplicate,
   clearTodayTransactions,
-  deleteLastTransaction,
+  deleteTransactionByIndex,
   updateLastTransactionAmount,
+  getTodayTransactions,
 } from "./database.js";
 import { extractPixAmount, extractFromPdf } from "./vision.js";
 import {
@@ -43,7 +44,7 @@ export async function createBot(token: string): Promise<Bot> {
     { command: "plano", description: "Ver seu plano e uso" },
     { command: "total", description: "Ver total do dia" },
     { command: "hoje", description: "Listar transações de hoje" },
-    { command: "apagar", description: "Apagar última transação" },
+    { command: "apagar", description: "Apagar transação (ex: /apagar 1)" },
     { command: "editar", description: "Editar última transação" },
     { command: "limpar", description: "Limpar todas transações de hoje" },
   ]);
@@ -56,7 +57,7 @@ export async function createBot(token: string): Promise<Bot> {
         "Comandos:\n" +
         "/total - Ver total do dia\n" +
         "/hoje - Listar transações\n" +
-        "/apagar - Apagar última transação\n" +
+        "/apagar - Apagar transação (/apagar 1)\n" +
         "/editar 150.00 - Editar valor\n" +
         "/limpar - Zerar tudo de hoje"
     );
@@ -76,17 +77,58 @@ export async function createBot(token: string): Promise<Bot> {
     await ctx.reply(message);
   });
 
-  // Handle /apagar command - delete last transaction
+  // Handle /apagar command - show transactions with delete buttons
   bot.command("apagar", async (ctx) => {
     const chatId = ctx.chat.id;
-    const deleted = await deleteLastTransaction(chatId);
+    const transactions = await getTodayTransactions(chatId);
+
+    if (transactions.length === 0) {
+      await ctx.reply("Nenhuma transação para apagar hoje.");
+      return;
+    }
+
+    const keyboard = new InlineKeyboard();
+    transactions.forEach((t, i) => {
+      const time = new Date(t.created_at!).toLocaleTimeString("pt-BR", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const amount = t.amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+      keyboard.text(`${i + 1}. ${time} - ${amount}`, `apagar:${i + 1}`).row();
+    });
+    keyboard.text("❌ Cancelar", "apagar:cancelar");
+
+    await ctx.reply("🗑️ Qual transação deseja apagar?", { reply_markup: keyboard });
+  });
+
+  // Handle delete transaction callback
+  bot.callbackQuery(/^apagar:(.+)$/, async (ctx) => {
+    const action = ctx.match[1];
+    const chatId = ctx.chat!.id;
+
+    if (action === "cancelar") {
+      await ctx.answerCallbackQuery({ text: "Cancelado" });
+      await ctx.deleteMessage();
+      return;
+    }
+
+    const index = parseInt(action, 10);
+    if (isNaN(index)) {
+      await ctx.answerCallbackQuery({ text: "Erro" });
+      return;
+    }
+
+    const deleted = await deleteTransactionByIndex(chatId, index);
 
     if (deleted) {
       const amount = deleted.amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+      await ctx.answerCallbackQuery({ text: `Apagada: ${amount}` });
+      await ctx.deleteMessage();
       const message = await getDailySummaryMessage(chatId);
-      await ctx.reply(`🗑️ Transação apagada: ${amount}\n\n${message}`);
+      await ctx.reply(`🗑️ Transação #${index} apagada: ${amount}\n\n${message}`);
     } else {
-      await ctx.reply("Nenhuma transação para apagar hoje.");
+      await ctx.answerCallbackQuery({ text: "Transação não encontrada" });
+      await ctx.deleteMessage();
     }
   });
 
@@ -217,13 +259,16 @@ export async function createBot(token: string): Promise<Bot> {
 
     const { error } = await supabase
       .from("subscriptions")
-      .upsert({
-        chat_id: targetChatId,
-        plan: "ultra",
-        transactions_used: 0,
-        period_start: new Date().toISOString(),
-        period_end: periodEnd.toISOString(),
-      });
+      .upsert(
+        {
+          chat_id: targetChatId,
+          plan: "ultra",
+          transactions_used: 0,
+          period_start: new Date().toISOString(),
+          period_end: periodEnd.toISOString(),
+        },
+        { onConflict: "chat_id" }
+      );
 
     if (error) {
       await ctx.reply(`❌ Erro: ${error.message}`);
