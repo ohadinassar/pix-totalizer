@@ -19,11 +19,22 @@ import {
   getStatusMessage,
   PLANS,
   PlanType,
+  activateSubscription,
 } from "./subscription.js";
+import { supabase } from "./database.js";
 import { createPixPayment, getPaymentMessage } from "./payments.js";
+
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID ? parseInt(process.env.ADMIN_CHAT_ID, 10) : null;
 
 export async function createBot(token: string): Promise<Bot> {
   const bot = new Bot(token);
+
+  // Global error handler - prevents crashes
+  bot.catch((err) => {
+    const ctx = err.ctx;
+    console.error(`Error while handling update ${ctx.update.update_id}:`, err.error);
+    ctx.reply("❌ Ocorreu um erro. Tente novamente.").catch(() => {});
+  });
 
   // Register commands in Telegram menu
   await bot.api.setMyCommands([
@@ -178,6 +189,144 @@ export async function createBot(token: string): Promise<Bot> {
     // Send payment message with copy-paste code
     const message = getPaymentMessage(plan, result.qrCode!, planInfo.price);
     await ctx.reply(message, { parse_mode: "Markdown" });
+  });
+
+  // Admin command: /grant <chat_id> - give lifetime ultra access
+  bot.command("grant", async (ctx) => {
+    const chatId = ctx.chat.id;
+
+    // Only admin can use this command
+    if (ADMIN_CHAT_ID && chatId !== ADMIN_CHAT_ID) {
+      return; // Silently ignore for non-admins
+    }
+
+    const args = ctx.message?.text?.split(" ").slice(1);
+    if (!args || args.length === 0) {
+      await ctx.reply("Uso: /grant <chat_id>\n\nExemplo: /grant 123456789");
+      return;
+    }
+
+    const targetChatId = parseInt(args[0], 10);
+    if (isNaN(targetChatId)) {
+      await ctx.reply("❌ Chat ID inválido");
+      return;
+    }
+
+    // Grant lifetime ultra access (year 2099)
+    const periodEnd = new Date("2099-12-31T23:59:59Z");
+
+    const { error } = await supabase
+      .from("subscriptions")
+      .upsert({
+        chat_id: targetChatId,
+        plan: "ultra",
+        transactions_used: 0,
+        period_start: new Date().toISOString(),
+        period_end: periodEnd.toISOString(),
+      });
+
+    if (error) {
+      await ctx.reply(`❌ Erro: ${error.message}`);
+      return;
+    }
+
+    await ctx.reply(`✅ Acesso lifetime Ultra concedido para chat ${targetChatId}`);
+  });
+
+  // Admin command: /stats - show usage statistics
+  bot.command("stats", async (ctx) => {
+    const chatId = ctx.chat.id;
+
+    // Only admin can use this command
+    if (ADMIN_CHAT_ID && chatId !== ADMIN_CHAT_ID) {
+      return;
+    }
+
+    // Get total users
+    const { count: totalUsers } = await supabase
+      .from("subscriptions")
+      .select("*", { count: "exact", head: true });
+
+    // Get users by plan
+    const { data: planStats } = await supabase
+      .from("subscriptions")
+      .select("plan");
+
+    const planCounts: Record<string, number> = { free: 0, basico: 0, pro: 0, ultra: 0 };
+    planStats?.forEach((s) => {
+      planCounts[s.plan] = (planCounts[s.plan] || 0) + 1;
+    });
+
+    // Get today's transactions
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const { count: todayTx } = await supabase
+      .from("transactions")
+      .select("*", { count: "exact", head: true })
+      .gte("created_at", today.toISOString());
+
+    // Get total transactions
+    const { count: totalTx } = await supabase
+      .from("transactions")
+      .select("*", { count: "exact", head: true });
+
+    await ctx.reply(
+      `📊 *Estatísticas*\n\n` +
+      `👥 *Usuários:* ${totalUsers || 0}\n` +
+      `├ 🆓 Grátis: ${planCounts.free}\n` +
+      `├ 💼 Básico: ${planCounts.basico}\n` +
+      `├ 🚀 Pro: ${planCounts.pro}\n` +
+      `└ ⚡ Ultra: ${planCounts.ultra}\n\n` +
+      `📄 *Transações:*\n` +
+      `├ Hoje: ${todayTx || 0}\n` +
+      `└ Total: ${totalTx || 0}`,
+      { parse_mode: "Markdown" }
+    );
+  });
+
+  // Admin command: /exportar - export today's transactions as CSV
+  bot.command("exportar", async (ctx) => {
+    const chatId = ctx.chat.id;
+
+    // Get today's transactions for this user (or all if admin)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let query = supabase
+      .from("transactions")
+      .select("*")
+      .gte("created_at", today.toISOString())
+      .order("created_at", { ascending: true });
+
+    // If not admin, only show user's own transactions
+    if (!ADMIN_CHAT_ID || chatId !== ADMIN_CHAT_ID) {
+      query = query.eq("chat_id", chatId);
+    }
+
+    const { data: transactions, error } = await query;
+
+    if (error || !transactions || transactions.length === 0) {
+      await ctx.reply("Nenhuma transação para exportar hoje.");
+      return;
+    }
+
+    // Create CSV
+    const headers = "Data,Valor,Banco,Cliente\n";
+    const rows = transactions.map((t) => {
+      const date = new Date(t.created_at).toLocaleString("pt-BR");
+      const amount = t.amount.toFixed(2).replace(".", ",");
+      const bank = t.bank || "";
+      const client = t.client_name || "";
+      return `"${date}","R$${amount}","${bank}","${client}"`;
+    }).join("\n");
+
+    const csv = headers + rows;
+    const buffer = Buffer.from(csv, "utf-8");
+
+    await ctx.replyWithDocument(
+      new InputFile(buffer, `transacoes_${today.toISOString().split("T")[0]}.csv`),
+      { caption: `📊 ${transactions.length} transações exportadas` }
+    );
   });
 
   // Handle photo messages
