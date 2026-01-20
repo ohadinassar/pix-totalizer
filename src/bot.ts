@@ -1,4 +1,4 @@
-import { Bot, Context, InputFile } from "grammy";
+import { Bot, Context, InputFile, InlineKeyboard } from "grammy";
 import {
   saveTransaction,
   isDuplicate,
@@ -128,25 +128,35 @@ export async function createBot(token: string): Promise<Bot> {
     await ctx.reply(message, { parse_mode: "Markdown" });
   });
 
-  // Handle /assinar command - show plans or create payment
+  // Handle /assinar command - show plans with buttons
   bot.command("assinar", async (ctx) => {
-    const chatId = ctx.chat.id;
-    const args = ctx.message?.text?.split(" ").slice(1).join(" ").toLowerCase();
+    const keyboard = new InlineKeyboard()
+      .text("💼 Básico - R$197", "assinar:basico")
+      .row()
+      .text("🚀 Pro - R$349", "assinar:pro")
+      .row()
+      .text("⚡ Ultra - R$697", "assinar:ultra");
 
-    // No plan specified - show all plans
-    if (!args) {
-      await ctx.reply(getPlansMessage(), { parse_mode: "Markdown" });
-      return;
-    }
+    await ctx.reply(
+      `📋 *Escolha seu plano:*\n\n` +
+      `💼 *Básico* - 1.000/mês - R$197\n` +
+      `🚀 *Pro* - 3.500/mês - R$349\n` +
+      `⚡ *Ultra* - Ilimitado - R$697`,
+      { parse_mode: "Markdown", reply_markup: keyboard }
+    );
+  });
 
-    // Validate plan
-    const plan = args as PlanType;
+  // Handle plan subscription button clicks
+  bot.callbackQuery(/^assinar:(.+)$/, async (ctx) => {
+    const plan = ctx.match[1] as PlanType;
+    const chatId = ctx.chat!.id;
+
     if (!PLANS[plan] || plan === "free") {
-      await ctx.reply(
-        "❌ Plano inválido.\n\nPlanos disponíveis:\n• basico\n• pro\n• ultra\n\nExemplo: /assinar basico"
-      );
+      await ctx.answerCallbackQuery({ text: "Plano inválido" });
       return;
     }
+
+    await ctx.answerCallbackQuery({ text: "Gerando PIX..." });
 
     const planInfo = PLANS[plan];
     await ctx.reply(`⏳ Gerando PIX para plano ${planInfo.displayName}...`);
